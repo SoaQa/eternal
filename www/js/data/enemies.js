@@ -479,7 +479,7 @@
     },
 
     hell_hound: {
-      id: 'hell_hound', name: 'Гончая преисподней', emoji: '🐕‍🔥',
+      id: 'hell_hound', name: 'Гончая преисподней', emoji: '👿',
       hpMin: 72, hpMax: 80,
       act: 3, tier: 'normal',
       moves: {

@@ -42,6 +42,9 @@ public class MainActivity extends Activity {
         Window w = getWindow();
         w.setStatusBarColor(Color.parseColor("#171225"));
         w.setNavigationBarColor(Color.parseColor("#0d0b14"));
+        // занимаем зону выреза, чтобы не было чёрного летербокса при скрытом статус-баре
+        w.getAttributes().layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         View decor = w.getDecorView();
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             WindowInsetsController c = decor.getWindowInsetsController();

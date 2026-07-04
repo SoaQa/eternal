@@ -61,6 +61,8 @@
   const UI = {
     sel: null,          // uid выбранной карты
     rewardShown: false,
+    defeatShown: false,
+    targeting: null,    // колбэк выбора цели (зелья)
 
     // =============== запуск ===============
     boot() {
@@ -102,7 +104,7 @@
         cont.onclick = () => {
           Sfx.play('click');
           if (GAME.State.load()) this.resumeRun();
-          else this.newRun();
+          else this.toast('⚠️ Сохранение', 'Сохранение повреждено или несовместимо. Можно начать новое восхождение.');
         };
         s.append(cont);
       }
@@ -127,12 +129,38 @@
 
     resumeRun() {
       const run = GAME.State.run;
-      if (run.pending && run.pending.type === 'combat') {
-        GAME.Combat.start(run.pending.enemies, run.pending.tier);
-        this.showCombat();
-      } else {
-        this.showMap();
+      const p = run.pending;
+      if (p) {
+        switch (p.type) {
+          case 'combat':
+            GAME.Combat.start(p.enemies, p.tier);
+            this.showCombat();
+            return;
+          case 'rewards':
+            if (p.rewards) {
+              this.showMap();
+              this.showRewards(p.rewards, p.tier);
+              return;
+            }
+            break;
+          case 'bossRelic':
+            if (p.choices && p.choices.length) {
+              this.showMap();
+              this.showBossRelicChoice(p.choices);
+              return;
+            }
+            break;
+          case 'shop':
+            if (run.shop) { this.showShop(); return; }
+            break;
+          case 'rest': this.showRest(); return;
+          case 'treasure': this.showTreasure(); return;
+          case 'event':
+            if (p.eventId && GAME.DATA.events[p.eventId]) { this.showEvent(p.eventId); return; }
+            break;
+        }
       }
+      this.showMap();
     },
 
     // =============== карта ===============
@@ -213,14 +241,30 @@
       node.visited = true;
       run.node = nodeId;
       run.stats.floorsClimbed++;
+      // каждый вход в узел фиксируется сразу — перезапуск возвращает на этот же узел
       switch (node.type) {
         case 'monster': return this.enterCombat('normal');
         case 'elite': return this.enterCombat('elite');
         case 'boss': return this.enterCombat('boss');
-        case 'event': return this.showEvent();
-        case 'rest': return this.showRest();
-        case 'shop': run.shop = S.generateShop(); S.save(); return this.showShop();
-        case 'treasure': return this.showTreasure();
+        case 'event': {
+          const ev = this.pickEvent();
+          run.pending = { type: 'event', eventId: ev.id };
+          S.save();
+          return this.showEvent(ev.id);
+        }
+        case 'rest':
+          run.pending = { type: 'rest' };
+          S.save();
+          return this.showRest();
+        case 'shop':
+          run.shop = S.generateShop();
+          run.pending = { type: 'shop' };
+          S.save();
+          return this.showShop();
+        case 'treasure':
+          run.pending = { type: 'treasure' };
+          S.save();
+          return this.showTreasure();
       }
     },
 
@@ -265,6 +309,10 @@
       $('#pile-draw').onclick = () => this.showPile('Колода добора', GAME.Combat.c.draw, true);
       $('#pile-discard').onclick = () => this.showPile('Сброс', GAME.Combat.c.discard);
       $('#pile-exhaust').onclick = () => this.showPile('Истощено', GAME.Combat.c.exhaust);
+      this.sel = null;
+      this.targeting = null;
+      this.rewardShown = false;
+      this.defeatShown = false;
       this.showScreen('combat');
       this.renderCombat();
       GAME.Combat.drainFx(); // стартовые эффекты без флоатеров
@@ -307,7 +355,15 @@
         bar.querySelector('.fill').style.width = Math.max(0, e.hp / e.maxHp * 100) + '%';
         d.appendChild(bar);
         d.appendChild(this.statusesRow(e.statuses));
-        if (this.sel !== null) {
+        if (this.targeting && !e.dead) {
+          // режим выбора цели (зелья) переживает любые перерисовки
+          d.classList.add('targetable');
+          d.onclick = () => {
+            const cb = this.targeting;
+            this.targeting = null;
+            cb(i);
+          };
+        } else if (this.sel !== null) {
           const selInst = c.hand.find(x => x.uid === this.sel);
           if (selInst && ['enemy'].includes(C.def(selInst).target) && !e.dead) {
             d.classList.add('targetable');
@@ -362,8 +418,13 @@
       if (c.result === 'victory' && !this.rewardShown) {
         this.rewardShown = true;
         Sfx.play('win');
-        setTimeout(() => this.showRewards(), 500);
-      } else if (c.result === 'defeat') {
+        // фиксируем победу и награды сразу — перезапуск не откатит бой
+        run.pending = { type: 'rewards', tier: c.tier, rewards: c.rewards };
+        S.save();
+        const rw = c.rewards, tier = c.tier;
+        setTimeout(() => this.showRewards(rw, tier), 500);
+      } else if (c.result === 'defeat' && !this.defeatShown) {
+        this.defeatShown = true;
         Sfx.play('lose');
         setTimeout(() => this.showGameOver(), 600);
       }
@@ -410,7 +471,9 @@
       const S = GAME.State;
       const pid = S.run.potions[slot];
       const p = GAME.DATA.potions[pid];
-      const inCombat = GAME.Combat.c && !GAME.Combat.c.result && !$('#screen-combat').classList.contains('hidden');
+      const onCombatScreen = !$('#screen-combat').classList.contains('hidden');
+      if (onCombatScreen && GAME.Combat.c && GAME.Combat.c.result) return; // бой окончен — не трогаем награды
+      const inCombat = GAME.Combat.c && !GAME.Combat.c.result && onCombatScreen;
       const o = this.openOverlay();
       o.append(el('h3', null, p.emoji + ' ' + p.name), el('div', 'ov-sub', p.desc));
       const act = el('div', 'ov-actions');
@@ -443,7 +506,11 @@
         }
       };
       const drop = el('button', 'btn danger', 'Выбросить');
-      drop.onclick = () => { S.removePotion(slot); S.save(); this.closeOverlay(); inCombat ? this.renderCombat() : this.showMap(); };
+      drop.onclick = () => {
+        S.removePotion(slot); S.save(); this.closeOverlay();
+        if (onCombatScreen) this.renderCombat();
+        else if (!$('#screen-map').classList.contains('hidden')) this.showMap();
+      };
       const cancel = el('button', 'btn', 'Отмена');
       cancel.onclick = () => { this.closeOverlay(); };
       act.append(drink, drop, cancel);
@@ -453,24 +520,22 @@
     pickEnemyTarget(cb) {
       const alive = GAME.Combat.alive();
       if (alive.length === 1) { cb(GAME.Combat.c.enemies.indexOf(alive[0])); return; }
+      // режим хранится в состоянии UI и восстанавливается любой перерисовкой боя
+      this.targeting = cb;
+      this.renderCombat();
       this.toast('🎯 Цель', 'Коснитесь врага, чтобы применить.');
-      GAME.Combat.c.enemies.forEach((e, i) => {
-        if (e.dead) return;
-        const d = $('#enemy-' + i);
-        if (!d) return;
-        d.classList.add('targetable');
-        d.onclick = () => cb(i);
-      });
     },
 
     // флоатеры из очереди боевых эффектов
     processFx() {
       const fx = GAME.Combat.drainFx();
       let delay = 0;
+      // элемент ищем в момент показа — перерисовки отсоединяют старые узлы
+      const nodeOf = (who) => who === 'player' ? $('#player-zone') : $('#enemy-' + who);
       for (const f of fx) {
-        const target = f.who === 'player' ? $('#player-zone') : $('#enemy-' + f.who);
         if (f.t === 'hit') {
           setTimeout(() => {
+            const target = nodeOf(f.who);
             if (f.amount > 0) {
               this.floater(target, '-' + f.amount, 'dmg');
               if (f.who === 'player' && navigator.vibrate) navigator.vibrate(40);
@@ -484,17 +549,19 @@
           }, delay);
           delay += 130;
         } else if (f.t === 'loseHp' && f.amount > 0) {
-          setTimeout(() => this.floater(target, '-' + f.amount, 'dmg'), delay);
+          setTimeout(() => this.floater(nodeOf(f.who), '-' + f.amount, 'dmg'), delay);
           delay += 100;
         } else if (f.t === 'heal' && f.amount > 0) {
-          setTimeout(() => { this.floater(target, '+' + f.amount, 'heal'); }, delay);
+          setTimeout(() => this.floater(nodeOf(f.who), '+' + f.amount, 'heal'), delay);
           delay += 100;
         } else if (f.t === 'block' && f.amount > 0) {
-          setTimeout(() => this.floater(target, '🛡+' + f.amount, 'blocked'), delay);
+          setTimeout(() => this.floater(nodeOf(f.who), '🛡+' + f.amount, 'blocked'), delay);
           delay += 80;
         }
       }
-      if (delay > 0) setTimeout(() => this.renderCombat(), delay + 200);
+      if (delay > 0) setTimeout(() => {
+        if (GAME.Combat.c) this.renderCombat();
+      }, delay + 200);
     },
 
     floater(target, text, cls) {
@@ -508,10 +575,8 @@
     },
 
     // =============== награды ===============
-    showRewards() {
-      const C = GAME.Combat, c = C.c, S = GAME.State;
-      const rw = c.rewards;
-      S.run.pending = null;
+    showRewards(rw, tier) {
+      const S = GAME.State;
 
       const panel = el('div', 'reward-panel');
       panel.append(el('h2', null, '⚔️ Победа!'));
@@ -528,6 +593,7 @@
         S.gainGold(rw.gold, true);
         Sfx.play('gold');
         b.classList.add('disabled');
+        S.save();
         this.renderTopbar();
       });
 
@@ -538,6 +604,7 @@
           S.addRelic(rw.relic);
           Sfx.play('gold');
           b.classList.add('disabled');
+          S.save();
           this.toast(r.emoji + ' ' + r.name, r.desc);
         });
       }
@@ -549,6 +616,7 @@
             rw.taken.potion = true;
             Sfx.play('gold');
             b.classList.add('disabled');
+            S.save();
           } else this.toast('🧪 Нет места', 'Все слоты зелий заняты.');
         });
       }
@@ -558,6 +626,7 @@
           if (id) { S.addCard(id); Sfx.play('gold'); }
           rw.taken.card = true;
           b.classList.add('disabled');
+          S.save();
           this.renderTopbar();
         });
       });
@@ -566,47 +635,55 @@
       cont.style.marginTop = '18px';
       cont.onclick = () => {
         panel.remove();
-        this.finishCombat();
+        this.finishCombat(tier);
       };
       panel.appendChild(cont);
-      $('#screen-combat').appendChild(panel);
+      $('#screens').appendChild(panel);
     },
 
-    finishCombat() {
+    finishCombat(tier) {
       const S = GAME.State, run = S.run;
-      const wasBoss = GAME.Combat.c && GAME.Combat.c.tier === 'boss';
       GAME.Combat.c = null;
-      if (wasBoss) {
+      if (tier === 'boss') {
         if (run.act >= 3) { this.showVictory(); return; }
-        // выбор босс-реликвии
         const pool = Object.values(GAME.DATA.relics).filter(r => r.rarity === 'boss' && !run.relics.includes(r.id));
         S.rng.shuffle(pool);
-        const choices = pool.slice(0, 3);
+        const choices = pool.slice(0, 3).map(r => r.id);
         if (choices.length) {
-          const o = this.openOverlay();
-          o.append(el('h3', null, '👑 Трофей владыки'), el('div', 'ov-sub', 'Выберите одну реликвию'));
-          for (const r of choices) {
-            const b = el('button', 'btn', r.emoji + ' <b>' + r.name + '</b><span class="hint">' + r.desc + '</span>');
-            b.onclick = () => {
-              S.addRelic(r.id);
-              this.closeOverlay();
-              S.nextAct(); S.save();
-              this.showMap();
-            };
-            o.appendChild(b);
-          }
+          run.pending = { type: 'bossRelic', choices };
+          S.save();
+          this.showMap();
+          this.showBossRelicChoice(choices);
         } else {
           S.nextAct(); S.save();
           this.showMap();
         }
       } else {
+        run.pending = null;
         S.save();
         this.showMap();
       }
     },
 
+    showBossRelicChoice(choices) {
+      const S = GAME.State;
+      const o = this.openOverlay();
+      o.append(el('h3', null, '👑 Трофей владыки'), el('div', 'ov-sub', 'Выберите одну реликвию'));
+      for (const id of choices) {
+        const r = GAME.DATA.relics[id];
+        const b = el('button', 'btn', r.emoji + ' <b>' + r.name + '</b><span class="hint">' + r.desc + '</span>');
+        b.onclick = () => {
+          S.addRelic(id);
+          this.closeOverlay();
+          S.nextAct(); S.save();
+          this.showMap();
+        };
+        o.appendChild(b);
+      }
+    },
+
     // =============== событие ===============
-    showEvent() {
+    pickEvent() {
       const S = GAME.State, run = S.run;
       const pool = Object.values(GAME.DATA.events).filter(ev =>
         (!ev.minAct || run.act >= ev.minAct) &&
@@ -614,28 +691,43 @@
         (!ev.once || !run.eventsSeen.includes(ev.id)));
       const ev = pool.length ? S.rng.pick(pool) : S.rng.pick(Object.values(GAME.DATA.events));
       run.eventsSeen.push(ev.id);
+      return ev;
+    },
 
+    showEvent(evId) {
+      const S = GAME.State, run = S.run;
+      const ev = GAME.DATA.events[evId];
       const s = $('#screen-event');
       s.innerHTML = '';
       const n = el('div', 'narrative');
       n.append(el('div', 'ev-emoji', ev.emoji), el('h2', null, ev.name), el('div', 'ev-text', ev.text));
+      let anyEnabled = false;
       for (const ch of ev.choices) {
         const ok = !ch.require || ((ch.require.gold === undefined || run.gold >= ch.require.gold) && (ch.require.hp === undefined || run.hp >= ch.require.hp));
+        if (ok) anyEnabled = true;
         const b = el('button', 'btn' + (ok ? '' : ' disabled'),
           ch.label + (ch.hint ? '<span class="hint">' + ch.hint + '</span>' : ''));
         b.onclick = () => {
           Sfx.play('click');
           this.applyOutcomes(ch.outcomes.slice(), () => {
             if (GAME.State.run.hp <= 0) { this.showGameOver(); return; }
+            run.pending = null;
+            S.save(); // исходы применены и зафиксированы до экрана результата
             n.innerHTML = '';
             n.append(el('div', 'ev-emoji', ev.emoji), el('h2', null, ev.name), el('div', 'ev-text', ch.resultText));
             const done = el('button', 'btn primary', 'Продолжить путь');
-            done.onclick = () => { S.save(); this.showMap(); };
+            done.onclick = () => this.showMap();
             n.append(done);
             this.renderTopbar();
           });
         };
         n.appendChild(b);
+      }
+      if (!anyEnabled) {
+        // страховка от событий-тупиков: всегда есть бесплатный выход
+        const esc = el('button', 'btn', 'Уйти прочь');
+        esc.onclick = () => { run.pending = null; S.save(); this.showMap(); };
+        n.appendChild(esc);
       }
       s.appendChild(n);
       this.showScreen('event');
@@ -669,14 +761,14 @@
         }
         case 'remove_card_choice':
           this.showDeckOverlay({
-            title: 'Удалить карту', pick: true,
+            title: 'Удалить карту', pick: true, mandatory: true, // плата уже внесена — выбор обязателен
             onPick: (inst) => { S.removeCard(inst.uid); next(); },
             onCancel: next,
           });
           return;
         case 'upgrade_card_choice':
           this.showDeckOverlay({
-            title: 'Улучшить карту', pick: true,
+            title: 'Улучшить карту', pick: true, mandatory: true,
             filter: (inst) => !inst.upgraded && GAME.DATA.cards[inst.id].upgrade,
             onPick: (inst) => { S.upgradeCard(inst.uid); next(); },
             onCancel: next,
@@ -690,6 +782,7 @@
         case 'potion_random': {
           const id = S.randomPotion();
           if (S.addPotion(id)) this.toast('🧪 Зелье', GAME.DATA.potions[id].name);
+          else this.toast('🧪 Нет места', 'Все слоты зелий заняты — зелье пришлось оставить.');
           return next();
         }
         case 'curse': {
@@ -768,7 +861,7 @@
       n.appendChild(list);
       const leave = el('button', 'btn primary', 'Уйти');
       leave.style.marginTop = '14px';
-      leave.onclick = () => { S.save(); this.showMap(); };
+      leave.onclick = () => { run.pending = null; S.save(); this.showMap(); };
       n.appendChild(leave);
       s.appendChild(n);
       this.showScreen('shop');
@@ -784,7 +877,8 @@
       n.append(el('div', 'ev-emoji', '🔥'), el('h2', null, 'Костёр'), el('div', 'ev-text', 'Пламя дрожит в темноте. Здесь безопасно — можно перевести дух или поработать над колодой.'));
       const b1 = el('button', 'btn', '😴 Отдохнуть <span class="hint">Восстановить ' + heal + ' HP</span>');
       b1.onclick = () => {
-        S.heal(heal); Sfx.play('heal'); S.save();
+        S.heal(heal); Sfx.play('heal');
+        run.pending = null; S.save();
         this.showMap();
       };
       const b2 = el('button', 'btn', '⚒️ Ковать <span class="hint">Улучшить одну карту</span>');
@@ -792,7 +886,7 @@
         this.showDeckOverlay({
           title: 'Улучшить карту', pick: true,
           filter: (inst) => !inst.upgraded && GAME.DATA.cards[inst.id].upgrade,
-          onPick: (inst) => { S.upgradeCard(inst.uid); Sfx.play('gold'); S.save(); this.showMap(); },
+          onPick: (inst) => { S.upgradeCard(inst.uid); Sfx.play('gold'); run.pending = null; S.save(); this.showMap(); },
           onCancel: () => { },
         });
       };
@@ -816,8 +910,11 @@
       } else {
         n.append(el('div', 'ev-text', 'Сундук пуст. Кто-то побывал здесь раньше.'));
       }
+      // реликвия выдана — фиксируем сразу, чтобы перезапуск не выдал вторую
+      S.run.pending = null;
+      S.save();
       const b = el('button', 'btn primary', 'Продолжить путь');
-      b.onclick = () => { S.save(); this.showMap(); };
+      b.onclick = () => this.showMap();
       n.appendChild(b);
       s.appendChild(n);
       this.showScreen('treasure');
@@ -864,12 +961,15 @@
     openOverlay() {
       const o = $('#overlay');
       o.innerHTML = '';
+      o.onclick = null; // toast/zoom вешают фоновое закрытие — не даём ему утечь в следующий оверлей
       o.classList.remove('hidden');
       return o;
     },
     closeOverlay() {
-      $('#overlay').classList.add('hidden');
-      $('#overlay').innerHTML = '';
+      const o = $('#overlay');
+      o.classList.add('hidden');
+      o.innerHTML = '';
+      o.onclick = null;
     },
 
     cardChoiceOverlay(ids, cb) {
@@ -900,13 +1000,15 @@
         const def = S.cardDef(inst);
         const d = this.cardEl(def, inst);
         if (opts.pick) d.onclick = () => { this.closeOverlay(); opts.onPick(inst); };
-        else this.addLongPress(d, () => this.zoomCard(def));
         grid.appendChild(d);
       }
       o.appendChild(grid);
-      const close = el('button', 'btn ov-actions', opts.pick ? 'Отмена' : 'Закрыть');
-      close.onclick = () => { this.closeOverlay(); if (opts.onCancel) opts.onCancel(); };
-      o.appendChild(close);
+      // при обязательном выборе (плата уже внесена) отмены нет — кроме случая, когда выбирать не из чего
+      if (!(opts.mandatory && cards.length)) {
+        const close = el('button', 'btn ov-actions', opts.pick ? 'Отмена' : 'Закрыть');
+        close.onclick = () => { this.closeOverlay(); if (opts.onCancel) opts.onCancel(); };
+        o.appendChild(close);
+      }
     },
 
     showPile(title, pile, hideOrder) {

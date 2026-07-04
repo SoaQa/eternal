@@ -35,7 +35,7 @@
       // групповые бои: каждый враг слабее, чтобы суммарная угроза не взрывалась;
       // акты 2-3 дополнительно смягчены — рост колоды отстаёт от роста цифр врагов
       const n = encounterIds.length;
-      const actTune = { 1: [1, 1], 2: [0.85, 0.9], 3: [0.85, 0.85] }[run.act] || [1, 1];
+      const actTune = { 1: [0.95, 1], 2: [0.82, 0.88], 3: [0.82, 0.85] }[run.act] || [1, 1];
       const dmgScale = (n === 1 ? 1 : (n === 2 ? 0.8 : 0.65)) * actTune[0];
       const hpScale = (n === 1 ? 1 : (n === 2 ? 0.85 : 0.7)) * actTune[1];
       for (const id of encounterIds) {
@@ -68,7 +68,7 @@
       // innate — наверх
       c.draw.sort((a, b) => (this.def(a).innate ? 1 : 0) - (this.def(b).innate ? 1 : 0));
 
-      for (const r of S.relicsWithHook('combatStart')) this.execEffects(r.hooks.combatStart, { source: c.player });
+      for (const r of S.relicsWithHook('combatStart')) this.execEffects(r.hooks.combatStart, { source: c.player, raw: true });
 
       for (const e of c.enemies) this.pickIntent(e);
       this.startPlayerTurn();
@@ -85,13 +85,15 @@
     // ================= ход игрока =================
     startPlayerTurn() {
       const c = this.c, S = GAME.State;
+      c.endPhase = false;
+      if (this.checkEnd()) return; // победа/поражение могли случиться в фазе врагов (яд и т.п.)
       c.turn++;
-      c.player.block = 0;
+      if (c.turn > 1) c.player.block = 0; // блок от combatStart-реликвий доживает до конца 1-го хода
       c.player.energy = c.player.energyMax;
       c.attacksThisTurn = 0;
       c.cardsThisTurn = 0;
 
-      for (const r of S.relicsWithHook('turnStart')) this.execEffects(r.hooks.turnStart, { source: c.player });
+      for (const r of S.relicsWithHook('turnStart')) this.execEffects(r.hooks.turnStart, { source: c.player, raw: true });
 
       this.tickDots(c.player);
       if (this.checkEnd()) return;
@@ -108,7 +110,7 @@
           if (!c.discard.length) break;
           c.draw = c.discard; c.discard = [];
           S.rng.shuffle(c.draw);
-          for (const r of S.relicsWithHook('onShuffle')) this.execEffects(r.hooks.onShuffle, { source: c.player });
+          for (const r of S.relicsWithHook('onShuffle')) this.execEffects(r.hooks.onShuffle, { source: c.player, raw: true });
           this.fx({ t: 'shuffle' });
         }
         const card = c.draw.pop();
@@ -152,7 +154,7 @@
           c.relicCounters[r.id] = (c.relicCounters[r.id] || 0) + 1;
           if (c.relicCounters[r.id] % h.everyN !== 0) continue;
         }
-        this.execEffects(h.effects, { source: c.player });
+        this.execEffects(h.effects, { source: c.player, raw: true });
       }
 
       // куда уходит карта
@@ -172,7 +174,8 @@
       const target = (targetIdx !== undefined && targetIdx !== null && c) ? c.enemies[targetIdx] : null;
       if (p.target === 'enemy' && (!target || target.dead)) return false;
       S.removePotion(slot);
-      this.execEffects(p.effects, { source: c ? c.player : { isPlayer: true, statuses: {}, block: 0 }, target });
+      // зелья действуют «как написано»: без модификаторов Силы/Ловкости/Слабости
+      this.execEffects(p.effects, { source: c ? c.player : { isPlayer: true, statuses: {}, block: 0 }, target, raw: true });
       this.fx({ t: 'potion', id: pid });
       this.checkEnd();
       return true;
@@ -181,8 +184,9 @@
     endTurn() {
       const c = this.c, S = GAME.State;
       if (c.result) return;
+      c.endPhase = true; // статусы, наложенные в этой фазе, не должны истечь в этот же ход
 
-      for (const r of S.relicsWithHook('turnEnd')) this.execEffects(r.hooks.turnEnd, { source: c.player });
+      for (const r of S.relicsWithHook('turnEnd')) this.execEffects(r.hooks.turnEnd, { source: c.player, raw: true });
       this.tickEndStatuses(c.player);
 
       // проклятия в руке
@@ -202,14 +206,12 @@
       }
       c.hand = keep;
 
-      this.decrementTurnStatuses(c.player, ['weak', 'vulnerable', 'frail']);
-
       // ход врагов
       for (const e of this.alive()) {
         e.block = 0;
         this.tickDots(e);
+        if (this.checkEnd()) return; // последний враг мог умереть от яда — фиксируем победу до тика игрока
         if (e.dead) continue;
-        if (this.checkEnd()) return;
         if (e.intent) {
           const move = e.def.moves[e.intent];
           this.execEffects(move.effects, { source: e, target: c.player, enemyMove: true });
@@ -222,6 +224,9 @@
         this.decrementTurnStatuses(e, ['weak', 'vulnerable', 'frail']);
         this.pickIntent(e);
       }
+      // дебаффы игрока истекают в конце раунда — после фазы врагов,
+      // чтобы Уязвимость N усиливала ровно N вражеских фаз
+      this.decrementTurnStatuses(c.player, ['weak', 'vulnerable', 'frail']);
       // ritual/metallicize игрока срабатывают в его конце хода
       this.startPlayerTurn();
     },
@@ -255,6 +260,11 @@
 
     decrementTurnStatuses(who, keys) {
       for (const k of keys) {
+        // статус, наложенный в текущей конечной фазе, пропускает первый декремент
+        if (who.freshStatuses && who.freshStatuses[k]) {
+          delete who.freshStatuses[k];
+          continue;
+        }
         if (who.statuses[k]) {
           who.statuses[k]--;
           if (who.statuses[k] <= 0) delete who.statuses[k];
@@ -304,6 +314,7 @@
     execEffects(effects, ctx) {
       for (const ef of effects || []) {
         if (this.c && this.c.result) return;
+        if (ctx.source && ctx.source.dead) break; // убитый (шипами) враг не доигрывает ход
         this.execEffect(ef, ctx);
       }
       this.checkDeaths();
@@ -328,21 +339,25 @@
 
       switch (ef.type) {
         case 'damage': {
+          const locked = isPlayerSrc && ctx.card && ctx.card.target === 'enemy' && ctx.target;
           for (let i = 0; i < times; i++) {
+            if (src.dead) break;
+            if (locked && ctx.target.dead) break; // мультиудар не перенацеливается после смерти цели
             const t = isPlayerSrc ? resolveTarget() : c.player;
             if (!t) break;
-            this.attack(src, t, ef.value);
+            this.attack(src, t, ef.value, ctx.raw);
           }
           break;
         }
         case 'damageAll': {
           for (let i = 0; i < times; i++) {
-            for (const e of this.alive()) this.attack(src, e, ef.value);
+            if (src.dead) break;
+            for (const e of this.alive()) this.attack(src, e, ef.value, ctx.raw);
           }
           break;
         }
         case 'block': {
-          for (let i = 0; i < times; i++) this.gainBlock(src, ef.value);
+          for (let i = 0; i < times; i++) this.gainBlock(src, ef.value, ctx.raw);
           break;
         }
         case 'draw': this.drawCards(ef.value); break;
@@ -456,10 +471,10 @@
       return Math.max(0, dmg);
     },
 
-    // возвращает нанесённый по HP урон
-    attack(attacker, defender, base) {
+    // возвращает нанесённый по HP урон (без оверкилла)
+    attack(attacker, defender, base, raw) {
       if (!defender || defender.dead) return 0;
-      const dmg = this.calcAttack(attacker, defender, base);
+      const dmg = raw ? Math.max(0, base) : this.calcAttack(attacker, defender, base);
       const dealt = this.applyHit(defender, dmg, true);
       if (attacker.isPlayer) GAME.State.run.stats.damageDealt += dealt;
       // шипы
@@ -475,21 +490,36 @@
       const blocked = Math.min(defender.block, amount);
       defender.block -= blocked;
       const rest = amount - blocked;
+      const hpBefore = defender.isPlayer ? S.run.hp : defender.hp;
       if (rest > 0) {
         if (defender.isPlayer) {
           S.hurt(rest);
-          for (const r of S.relicsWithHook('onDamaged')) this.execEffects(r.hooks.onDamaged, { source: this.c.player });
+          this.fireOnDamaged();
         } else {
           defender.hp = Math.max(0, defender.hp - rest);
         }
       }
-      this.fx({ t: 'hit', who: this.whoRef(defender), amount: rest, blocked });
-      return rest;
+      const actual = Math.min(rest, hpBefore);
+      this.fx({ t: 'hit', who: this.whoRef(defender), amount: actual, blocked });
+      return actual;
+    },
+
+    fireOnDamaged() {
+      if (this._dmgGuard || !this.c) return; // защита от рекурсии (реликвия с loseHP в onDamaged)
+      this._dmgGuard = true;
+      for (const r of GAME.State.relicsWithHook('onDamaged')) {
+        this.execEffects(r.hooks.onDamaged, { source: this.c.player, raw: true });
+      }
+      this._dmgGuard = false;
     },
 
     loseHp(who, n) {
-      if (who.isPlayer) GAME.State.hurt(n);
-      else who.hp = Math.max(0, who.hp - n);
+      if (who.isPlayer) {
+        GAME.State.hurt(n);
+        if (n > 0) this.fireOnDamaged();
+      } else {
+        who.hp = Math.max(0, who.hp - n);
+      }
       this.fx({ t: 'loseHp', who: this.whoRef(who), amount: n });
     },
 
@@ -521,6 +551,11 @@
       }
       who.statuses[status] = (who.statuses[status] || 0) + value;
       if (who.statuses[status] === 0 && status !== 'strength') delete who.statuses[status];
+      // дебафф, полученный игроком в конечной фазе (ход врагов, проклятия),
+      // должен пережить декремент конца этого раунда
+      if (who.isPlayer && this.c && this.c.endPhase && ['weak', 'vulnerable', 'frail'].includes(status)) {
+        (who.freshStatuses = who.freshStatuses || {})[status] = true;
+      }
       this.fx({ t: 'status', who: this.whoRef(who), status, v: who.statuses[status] || 0 });
     },
 

@@ -187,12 +187,16 @@
       return chosen;
     },
     randomRelic(rarity) {
-      let pool = Object.values(GAME.DATA.relics)
-        .filter(r => !this.run.relics.includes(r.id));
-      if (rarity) pool = pool.filter(r => r.rarity === rarity);
-      else pool = pool.filter(r => ['common', 'uncommon', 'rare'].includes(r.rarity));
-      if (!pool.length) pool = Object.values(GAME.DATA.relics).filter(r => !this.run.relics.includes(r.id));
-      if (!pool.length) return null;
+      const unowned = Object.values(GAME.DATA.relics).filter(r => !this.run.relics.includes(r.id));
+      let pool;
+      if (rarity) {
+        pool = unowned.filter(r => r.rarity === rarity);
+        if (!pool.length) return null; // обещанную редкость не подменяем
+      } else {
+        pool = unowned.filter(r => ['common', 'uncommon', 'rare'].includes(r.rarity));
+        if (!pool.length) pool = unowned.filter(r => !['boss', 'starter'].includes(r.rarity));
+        if (!pool.length) return null;
+      }
       return this.rng.pick(pool).id;
     },
     randomPotion() {
