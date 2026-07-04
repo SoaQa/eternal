@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- луна -->
+    <path
+        android:fillColor="#9a8fc0"
+        android:pathData="M68,24 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0" />
+    <!-- башня с зубцами -->
+    <path
+        android:fillColor="#e8c35a"
+        android:pathData="M36,80 L36,30 L44,30 L44,38 L50,38 L50,30 L58,30 L58,38 L64,38 L64,30 L72,30 L72,80 Z" />
+    <!-- ворота -->
+    <path
+        android:fillColor="#171225"
+        android:pathData="M49,80 L49,66 Q54,59 59,66 L59,80 Z" />
+    <!-- окно -->
+    <path
+        android:fillColor="#171225"
+        android:pathData="M51,46 h6 v8 h-6 Z" />
+</vector>
