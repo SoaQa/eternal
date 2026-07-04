@@ -96,7 +96,7 @@
     showTitle() {
       const s = $('#screen-title');
       s.innerHTML = '';
-      s.append(el('div', 'logo-emoji', '🗼'), el('h1', null, 'ETERNAL'), el('h2', null, 'ВЕЧНАЯ БАШНЯ'));
+      s.append(el('div', 'logo-emoji', '🏰'), el('h1', null, 'ETERNAL'), el('h2', null, 'ВЕЧНАЯ БАШНЯ'));
       if (GAME.State.hasSave()) {
         const cont = el('button', 'btn primary', 'Продолжить восхождение');
         cont.onclick = () => {
@@ -140,12 +140,14 @@
       const S = GAME.State, run = S.run, map = run.map;
       const s = $('#screen-map');
       s.innerHTML = '';
+      this.showScreen('map'); // сначала показать, чтобы ширина мерялась по реальной вёрстке
       const ROW_H = 96, PAD = 60;
       const H = GAME.MapGen.ROWS * ROW_H + PAD * 2;
       const wrap = el('div');
       wrap.id = 'map-wrap';
       wrap.style.height = H + 'px';
-      const W = s.clientWidth || document.body.clientWidth || 360;
+      const W = s.clientWidth || document.documentElement.clientWidth || 360;
+      wrap.style.width = W + 'px';
 
       const y = (row) => H - PAD - row * ROW_H;
       const x = (node) => Math.round(node.x * (W - 70)) + 35;
@@ -153,6 +155,8 @@
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.id = 'map-svg';
       svg.setAttribute('width', W); svg.setAttribute('height', H);
+      svg.style.width = W + 'px'; // проценты из CSS резолвятся ненадёжно — задаём явно
+      svg.style.height = H + 'px';
 
       const reachable = this.reachableNodes();
       for (const id in map.nodes) {
@@ -162,7 +166,11 @@
           const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
           line.setAttribute('x1', x(n)); line.setAttribute('y1', y(n.row));
           line.setAttribute('x2', x(m)); line.setAttribute('y2', y(m.row));
-          if (n.id === run.node && reachable.includes(m.id)) line.classList.add('lit');
+          const lit = n.id === run.node && reachable.includes(m.id);
+          line.setAttribute('stroke', lit ? '#e8c35a' : '#514488');
+          line.setAttribute('stroke-width', '3');
+          line.setAttribute('stroke-dasharray', '6 5');
+          if (lit) line.classList.add('lit');
           svg.appendChild(line);
         }
       }
@@ -186,7 +194,6 @@
       title.id = 'map-title';
       title.textContent = 'АКТ ' + run.act + ' — ' + ['', 'Подножие башни', 'Проклятые залы', 'Обитель дракона'][run.act];
       s.append(title, wrap);
-      this.showScreen('map');
       // прокрутка к текущей позиции
       const curRow = run.node ? map.nodes[run.node].row : 0;
       s.scrollTop = Math.max(0, y(curRow) - s.clientHeight * 0.6);

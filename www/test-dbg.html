@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Eternal — Вечная Башня</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar" class="hidden">
+    <div class="tb-item" id="tb-hp">❤️ <span id="tb-hp-val"></span></div>
+    <div class="tb-item" id="tb-gold">💰 <span id="tb-gold-val"></span></div>
+    <div class="tb-item" id="tb-floor">🗼 <span id="tb-floor-val"></span></div>
+    <div class="tb-item tb-btn" id="tb-deck">🃏 <span id="tb-deck-val"></span></div>
+    <div class="tb-item tb-btn" id="tb-menu">☰</div>
+  </header>
+
+  <main id="screens">
+    <section id="screen-title" class="screen"></section>
+    <section id="screen-map" class="screen hidden"></section>
+    <section id="screen-combat" class="screen hidden"></section>
+    <section id="screen-event" class="screen hidden"></section>
+    <section id="screen-shop" class="screen hidden"></section>
+    <section id="screen-rest" class="screen hidden"></section>
+    <section id="screen-treasure" class="screen hidden"></section>
+    <section id="screen-gameover" class="screen hidden"></section>
+    <section id="screen-victory" class="screen hidden"></section>
+  </main>
+
+  <div id="overlay" class="hidden"></div>
+  <div id="floaters"></div>
+</div>
+
+<script src="js/rng.js"></script>
+<script src="js/data/cards.js"></script>
+<script src="js/data/enemies.js"></script>
+<script src="js/data/relics.js"></script>
+<script src="js/data/events.js"></script>
+<script src="js/engine/state.js"></script>
+<script src="js/engine/map.js"></script>
+<script src="js/engine/combat.js"></script>
+<script src="js/ui/ui.js"></script>
+<script src="js/main.js"></script><script>
+setTimeout(function(){
+  GAME.UI.newRun();
+  GAME.UI.travel(GAME.State.run.map.rows[0][0]);
+  setTimeout(function(){
+    var hand = document.getElementById('hand');
+    var btn = document.getElementById('end-turn');
+    var cb = document.getElementById('combat-bottom');
+    var card = hand.querySelector('.card');
+    document.title = JSON.stringify({
+      vw: document.documentElement.clientWidth, vh: document.documentElement.clientHeight,
+      iw: window.innerWidth, dpr: window.devicePixelRatio,
+      cbW: cb.getBoundingClientRect().width,
+      handW: hand.getBoundingClientRect().width,
+      cardW: card ? card.getBoundingClientRect().width : null,
+      btnLeft: btn.getBoundingClientRect().left, btnW: btn.getBoundingClientRect().width
+    });
+  }, 300);
+},300);</script>
+</body>
+</html>
