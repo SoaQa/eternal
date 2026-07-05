@@ -29,13 +29,13 @@
   const TYPE_RU = { attack: 'атака', skill: 'умение', power: 'мощь', status: 'статус', curse: 'проклятие' };
 
   // ---------- звук ----------
-  let audioCtx = null;
   const Sfx = {
     muted: false,
     play(kind) {
       if (this.muted) return;
       try {
-        audioCtx = audioCtx || new (G.AudioContext || G.webkitAudioContext)();
+        const audioCtx = GAME.Music.ensureCtx();
+        if (!audioCtx) return;
         const t = audioCtx.currentTime;
         const seqs = {
           click: [[700, .05, 'square', .04]],
@@ -71,7 +71,14 @@
         document.body.innerHTML = '<div style="padding:40px;color:#f88">Ошибка данных: ' + missing.join(', ') + '</div>';
         return;
       }
-      Sfx.muted = !!GAME.State.settings().muted;
+      const st = GAME.State.settings();
+      Sfx.muted = !!st.muted;
+      GAME.Music.muted = !!st.musicMuted;
+      // политика автовоспроизведения: пробуем сразу (WebView разрешает), иначе — с первого касания
+      GAME.Music.start();
+      const unlock = () => { GAME.Music.start(); };
+      document.addEventListener('pointerdown', unlock, { once: true });
+      document.addEventListener('touchstart', unlock, { once: true });
       $('#tb-deck').addEventListener('click', () => { Sfx.play('click'); this.showDeckOverlay({ title: 'Ваша колода' }); });
       $('#tb-menu').addEventListener('click', () => { Sfx.play('click'); this.showMenu(); });
       this.showTitle();
@@ -118,6 +125,7 @@
       help.onclick = () => { Sfx.play('click'); this.showHelp(); };
       s.append(nb, help, el('div', 'foot', 'тёмное фэнтези • колода • рогалик'));
       this.showScreen('title');
+      GAME.Music.setScene('title');
     },
 
     newRun() {
@@ -222,6 +230,7 @@
       title.id = 'map-title';
       title.textContent = 'АКТ ' + run.act + ' — ' + ['', 'Подножие башни', 'Проклятые залы', 'Обитель дракона'][run.act];
       s.append(title, wrap);
+      GAME.Music.setScene('map');
       // прокрутка к текущей позиции
       const curRow = run.node ? map.nodes[run.node].row : 0;
       s.scrollTop = Math.max(0, y(curRow) - s.clientHeight * 0.6);
@@ -314,6 +323,7 @@
       this.rewardShown = false;
       this.defeatShown = false;
       this.showScreen('combat');
+      GAME.Music.setScene(GAME.Combat.c && GAME.Combat.c.tier === 'boss' ? 'boss' : 'combat');
       this.renderCombat();
       GAME.Combat.drainFx(); // стартовые эффекты без флоатеров
     },
@@ -937,6 +947,7 @@
       b.onclick = () => this.showTitle();
       s.appendChild(b);
       this.showScreen('gameover');
+      GAME.Music.setScene('end');
     },
 
     showVictory() {
@@ -955,6 +966,7 @@
       b.onclick = () => this.showTitle();
       s.appendChild(b);
       this.showScreen('victory');
+      GAME.Music.setScene('title');
     },
 
     // =============== оверлеи ===============
@@ -1065,8 +1077,14 @@
       const snd = el('button', 'btn', Sfx.muted ? '🔇 Звук: выкл' : '🔊 Звук: вкл');
       snd.onclick = () => {
         Sfx.muted = !Sfx.muted;
-        GAME.State.saveSettings({ muted: Sfx.muted });
+        GAME.State.saveSettings({ muted: Sfx.muted, musicMuted: GAME.Music.muted });
         snd.textContent = Sfx.muted ? '🔇 Звук: выкл' : '🔊 Звук: вкл';
+      };
+      const mus = el('button', 'btn', GAME.Music.muted ? '🎵 Музыка: выкл' : '🎵 Музыка: вкл');
+      mus.onclick = () => {
+        GAME.Music.setMuted(!GAME.Music.muted);
+        GAME.State.saveSettings({ muted: Sfx.muted, musicMuted: GAME.Music.muted });
+        mus.textContent = GAME.Music.muted ? '🎵 Музыка: выкл' : '🎵 Музыка: вкл';
       };
       const help = el('button', 'btn', '📖 Как играть');
       help.onclick = () => this.showHelp();
@@ -1075,7 +1093,7 @@
         GAME.State.clearSave();
         this.showTitle();
       });
-      act.append(resume, snd, help, abandon);
+      act.append(resume, snd, mus, help, abandon);
       o.appendChild(act);
     },
 
